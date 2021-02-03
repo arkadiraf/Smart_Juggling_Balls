@@ -1,0 +1,9 @@
+<off>
+<effects>
+<simple>
+<scan>
+<complex>
+<data>
+<scale><15>
+<spark>
+<scale><3>

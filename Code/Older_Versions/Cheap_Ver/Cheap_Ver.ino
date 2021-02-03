@@ -1,4 +1,4 @@
-// Juggling balls Test code
+// Cheap Ver 1 Juggling balls code
 
 /* Pinout:
     Arduino:
@@ -32,6 +32,8 @@
 ///////////////
 #include <math.h>
 #include <SPI.h>
+#include "nRF24L01.h"
+#include "RF24.h"
 #include <Adafruit_NeoPixel.h>
 #include "I2Cdev.h"
 #include "MPU6050.h"
@@ -50,7 +52,9 @@
 MPU6050 accelgyro;
 
 #define MPUREADDELAY 20
+// Single radio pipe address for the 2 nodes to communicate.
 unsigned long MpuMillisStamp=0;
+
 const byte INT_MPU_PIN = 2; // INT DRDYG
 
 int16_t ax, ay, az;
@@ -62,13 +66,26 @@ double GyroValue[3]={0,0,0}; //in Degrees per second
 #define SAMPLE2GACC 2048.0   // +/-16g full scale, 16 bit resolution--> 2^16/32=2048
 #define SAMPLE2AGYRO 16.384  // +/-2000 Deg/Sec, 16 but tesolution--> 2^16/4000=16.384
 	
+////////////////////////////
+// communication variable //
+////////////////////////////
+#define CommunicationDelay 500
+// Single radio pipe address for the 2 nodes to communicate.
+unsigned long CommunicationMillisStamp=0;
+
+// Set up nRF24L01 radio on SPI bus plus pins 9 & 10
+RF24 radio(9,10);
+// Radio pipe addresses for the 2 nodes to communicate.
+const uint64_t pipes[2] = { 0xF0F0F0F0E1LL, 0xF0F0F0F0D2LL };
+
+
 
 /////////////
 // Battery //
 /////////////
 double Vbaterry=3.7;
 #define VBATTERY_PIN A0
-#define ADC2VBAT 155.15 // Convert ADC reading to voltage, VBatt/2=Vref/ADC_Res
+#define ADC2VBAT 163.0 // Convert ADC reading to voltage, VBatt*10/57=Vref/ADC_Res Vref=1.1v ADC_Res=1023 
 #define BATTERYMINIMUM 3.3 // minimum allowed battery voltage
 byte BatteryStatus=1; // variable to indicate battery status,0- empty, 1-full
 #define BatterySampleDelay 1000 // sample period of the battery voltage
@@ -108,10 +125,10 @@ byte AcclStatusArr[3]={1,1,1};
 byte MagStatusArr[3]={1,1,1};
 // set pixel state
 // 0- do nothing, 1- change color, 2- 1G be green
-byte PixelState=0;
+byte PixelState=1;
 #define PixelsNumStates 3
-// 0- retain color, 1- all colors the same, 2- chasing one color, 3-chasing 2 colors,
-byte PixelsMode=0;
+// 0- off, 1- all colors the same, 2- chasing one color, 3-chasing 2 colors,
+byte PixelsMode=1;
 #define PixelsNumModes 4
 // variable to store pixel referance for theater chasing mode
 int theaterChasePixel=0;
@@ -131,9 +148,15 @@ void setup(){
   // neo Pixel initialize
   strip.begin();
   strip.show(); // Initialize all pixels to 'off'
-
-  // adc ref
-  analogReference(INTERNAL);
+  
+  // Nrf initialize
+  radio.begin();
+  radio.setRetries(15,15);
+  radio.openWritingPipe(pipes[0]);
+  radio.openReadingPipe(1,pipes[1]);
+  
+  radio.startListening();
+  
   //MPU6050 Settings
   // initialize device
     accelgyro.initialize();
@@ -146,7 +169,9 @@ void setup(){
     accelgyro.setFullScaleAccelRange(MPU6050_ACCEL_FS_16);
     accelgyro.setFullScaleGyroRange(MPU6050_GYRO_FS_2000);
   
-  // set battery pin as input and read voltage
+  // set battery pin as input  with internal referense of 1.1v and read voltage
+  analogReference(INTERNAL);
+  delay(10);// settle down
   pinMode(VBATTERY_PIN, INPUT);
   Vbaterry=((double)analogRead(VBATTERY_PIN))/ADC2VBAT;
   
@@ -167,13 +192,12 @@ void loop(){
 	if ((millis()-VbatSampleMillis)>BatterySampleDelay){
 		VbatSampleMillis=millis();
 		Vbaterry=((double)analogRead(VBATTERY_PIN))/ADC2VBAT;
-    Serial.println(analogRead(VBATTERY_PIN));
 		if (Vbaterry>(BATTERYMINIMUM+0.1)){ //add 0.1 in order to remove turning on and off when battery close to value.
 			BatteryStatus=1;
 		}else if (Vbaterry<BATTERYMINIMUM){
 			BatteryStatus=0;
 		}
-		Serial.println(Vbaterry);
+		//Serial.println(Vbaterry);
 	}
 	 // accelerometer interrupt ready
 	 if ((millis()-MpuMillisStamp)>MPUREADDELAY){
@@ -231,8 +255,8 @@ void loop(){
 		//Serial.println(AcclStatus);
 
 
-     // update ReedSwitch status
-     MagStatus=digitalRead(REEDSWITCHPIN);
+            	// update ReedSwitch status
+                MagStatus=digitalRead(REEDSWITCHPIN);
             
 		for (int ii=2; ii>0; ii--){
 			MagStatusArr[ii]=MagStatusArr[ii-1];
@@ -246,16 +270,32 @@ void loop(){
 
 	
 	}
+ 
   
-	// neopixels:
-	if(BatteryStatus){ //lets play
+  
+  
+  
+unsigned long TimeMillis=millis();
+  if (((TimeMillis-CommunicationMillisStamp)>CommunicationDelay)||(CommunicationMillisStamp>TimeMillis)){
+    CommunicationMillisStamp=TimeMillis;
+  
+    radio.stopListening();  
+    int ok = radio.write( &Vbaterry, sizeof(double) );
+    if(ok){Serial.println("ok");}else{Serial.println("not ok");}
+    Serial.println(Vbaterry);
+    radio.startListening();    
     
+  }
+
+	// neopixels:
+	if((BatteryStatus)&&(PixelsMode)){ //lets play
+		
 		if (PixelState==1){ //change color
 			PixelState=0;
 			CurrColorNum++;
 			CurrColorNum=CurrColorNum%NUMOFCOLORS;
 			Color=ColorsArr[CurrColorNum];
-			if (PixelsMode==1 || (PixelsMode == 0)){
+			if (PixelsMode==1){
 				colorWipe(Color);
 			}
 		}
