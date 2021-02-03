@@ -1,0 +1,7 @@
+    Command Protocol:
+    <EndGame>\r\n                       Turn Effects On
+    <Brightness><BrightnessNUM>\r\n     Set Brightness
+    <SetTime><TimeSeconds>\r\n          Set Game Time, (Seconds)
+    <Restart>\r\n                       Restart Game
+    <Data><DataNum>\r\n                 Set Data on off
+    <AddTime><AddTimeNum>\r\n           Add Time in seconds after each move
